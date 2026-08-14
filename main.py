@@ -18,27 +18,30 @@ def get_session():
     with Session(engine) as session:
         yield session
 
-class Task(SQLModel,table=True):
-    id:Optional[int] =Field(default=None,primary_key=True)
-    title:str
+class TaskCreate(SQLModel):
+    title:str = Field(min_length=1)
     description:str
     completed:bool=False
     created_at:str
+class Task(TaskCreate,table=True):
+    id:Optional[int] =Field(default=None,primary_key=True)
+    
 
 @app.get("/")
 async def read_root():
     return {"message : api is running"}   
-@app.post("/tasks")
-async def create_task(task:Task,session:Session=Depends(get_session)):
-    session.add(task)
+@app.post("/tasks",response_model=Task)
+async def create_task(task:TaskCreate,session:Session=Depends(get_session)):
+    db_task = Task.model_validate(task)
+    session.add(db_task)
     session.commit()
-    session.refresh(task)
-    return task 
+    session.refresh(db_task)
+    return db_task 
 @app.get("/tasks",response_model=List[Task])
 async def get_tasks(session:Session=Depends(get_session)):
     tasks = session.exec(select(Task)).all()
     return tasks
-@app.get("/tasks/{task_id}")
+@app.get("/tasks/{task_id}",response_model=Task)
 async def get_task(task_id:int,session:Session=Depends(get_session)):
     task = session.get(Task, task_id)
     if not task :
@@ -46,7 +49,7 @@ async def get_task(task_id:int,session:Session=Depends(get_session)):
     return task
 
 @app.put("/tasks/{task_id}")
-async def update_task(task_id:int,task:Task,session:Session=Depends(get_session)):
+async def update_task(task_id:int,task:TaskCreate,session:Session=Depends(get_session)):
     old_task=session.get(Task,task_id)
     if not old_task:
         raise HTTPException(status_code=404,detail="task pas trouve")
