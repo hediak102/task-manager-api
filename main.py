@@ -1,45 +1,69 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI,Depends, HTTPException
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from typing import Optional, List
+
+sqlite_file_name = "database.db"
+sqlite_url = f"sqlite:///{sqlite_file_name}"
+
+engine = create_engine(sqlite_url, echo=True)
 
 app=FastAPI()
 
-class Task(BaseModel):
-    id:int
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
+@app.on_event("startup")
+def on_startup():
+    create_db_and_tables()
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+class Task(SQLModel,table=True):
+    id:Optional[int] =Field(default=None,primary_key=True)
     title:str
     description:str
-    completed:bool
+    completed:bool=False
     created_at:str
 
 @app.get("/")
 async def read_root():
     return {"message : api is running"}   
-fake_db_task=[ {"id": 1, "title": "doing the dishes", "description": "i need to do the dishes", "completed": False, "created_at": "12:30"},
-    {"id": 2, "title": "doing the clothes", "description": "i need to wash the clothes", "completed": False, "created_at": "14:30"}]
-
 @app.post("/tasks")
-async def create_task(task:Task):
-    fake_db_task.append(task.dict())
-    return {"task created ok ."}
-@app.get("/tasks")
-async def get_tasks():
-    return fake_db_task
+async def create_task(task:Task,session:Session=Depends(get_session)):
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return task 
+@app.get("/tasks",response_model=List[Task])
+async def get_tasks(session:Session=Depends(get_session)):
+    tasks = session.exec(select(Task)).all()
+    return tasks
 @app.get("/tasks/{task_id}")
-async def get_task(task_id:int):
-    for i in fake_db_task:
-        if (task_id==i['id']):
-            return{"voici le task": f"avec id {task_id}", " task" : i}
-    return {"task pas trouvee"}
+async def get_task(task_id:int,session:Session=Depends(get_session)):
+    task = session.get(Task, task_id)
+    if not task :
+        raise HTTPException(status_code=404,detail="task pas trouve")
+    return task
+
 @app.put("/tasks/{task_id}")
-async def update_task(task_id:int,task:Task):
-    for index, t in enumerate(fake_db_task):
-        if t["id"] == task_id:
-            fake_db_task[index] = task.dict()
-            return {"message": "task updated"}
-    return {"task pas trouvee"}
+async def update_task(task_id:int,task:Task,session:Session=Depends(get_session)):
+    old_task=session.get(Task,task_id)
+    if not old_task:
+        raise HTTPException(status_code=404,detail="task pas trouve")
+    old_task.title=task.title
+    old_task.description=task.description
+    old_task.created_at=task.created_at
+    old_task.completed=task.completed
+    session.add(old_task)
+    session.commit()
+    session.refresh(old_task)
+    return old_task
+
 @app.delete("/tasks/{task_id}")
-async def delete_task(task_id:int):
-    for i in fake_db_task:
-        if task_id==i['id']:
-            fake_db_task.remove(i)
-            return{"task deleted"}
-    return {"task pas trouvee"}
+async def delete_task(task_id:int,session:Session=Depends(get_session)):
+    task=session.get(Task,task_id)
+    if not task:
+        raise HTTPException(status_code=404,detail="task pas trouve")
+    session.delete(task)
+    session.commit()
+    return {"message":"task deleted"}
