@@ -50,9 +50,13 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
     hashed_password: str
+    is_admin: bool = Field(default=False)
 class RefreshRequest(BaseModel):
     refresh_token: str
-
+class UserRead(SQLModel):
+    id: int
+    username: str
+    is_admin: bool
 
 
 # AUTH UTILITIES
@@ -110,6 +114,10 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="admin access required")
+    return current_user
 
 
 # APP SETUP
@@ -255,3 +263,42 @@ async def delete_task(
     session.delete(task)
     session.commit()
     return {"message": "task deleted"}
+
+#admin routes
+
+@app.get("/admin/tasks", response_model=List[Task])
+async def get_all_tasks(
+    session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
+):
+    tasks = session.exec(select(Task)).all()
+    return tasks
+
+@app.get("/admin/users", response_model=List[UserRead])
+async def get_all_users(
+    session: Session = Depends(get_session),
+    admin: User = Depends(get_current_admin),
+):
+    users = session.exec(select(User)).all()
+    return users
+
+BOOTSTRAP_ADMIN_KEY = os.getenv("BOOTSTRAP_ADMIN_KEY")
+
+@app.post("/bootstrap-admin/{username}")
+async def bootstrap_admin(
+    username: str,
+    secret_key: str,
+    session: Session = Depends(get_session),
+):
+    if not BOOTSTRAP_ADMIN_KEY or secret_key != BOOTSTRAP_ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="invalid bootstrap key")
+
+    user = session.exec(select(User).where(User.username == username)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    user.is_admin = True
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return {"message": f"{username} is now admin"}
