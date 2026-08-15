@@ -38,8 +38,14 @@ async def create_task(task:TaskCreate,session:Session=Depends(get_session)):
     session.refresh(db_task)
     return db_task 
 @app.get("/tasks",response_model=List[Task])
-async def get_tasks(session:Session=Depends(get_session)):
-    tasks = session.exec(select(Task)).all()
+async def get_tasks(session:Session=Depends(get_session)
+                    ,skip:int=0,limit:int=10,
+                    completed: Optional[bool] = None):
+    #tasks = session.exec(select(Task)).all()
+    query=select(Task)
+    if completed is not None:
+        query=query.where(Task.completed==completed)
+    tasks = session.exec(query.offset(skip).limit(limit)).all()
     return tasks
 @app.get("/tasks/{task_id}",response_model=Task)
 async def get_task(task_id:int,session:Session=Depends(get_session)):
