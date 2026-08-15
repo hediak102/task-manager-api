@@ -1,78 +1,224 @@
-from fastapi import FastAPI,Depends, HTTPException
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from datetime import datetime, timedelta
 from typing import Optional, List
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+# DATABASE SETUP
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
 engine = create_engine(sqlite_url, echo=True)
 
-app=FastAPI()
-
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
+
 def get_session():
     with Session(engine) as session:
         yield session
 
+
+
+# MODELS
+
+
 class TaskCreate(SQLModel):
-    title:str = Field(min_length=1)
-    description:str
-    completed:bool=False
-    created_at:str
-class Task(TaskCreate,table=True):
-    id:Optional[int] =Field(default=None,primary_key=True)
-    
+    title: str = Field(min_length=1)
+    description: str
+    completed: bool = False
+    created_at: str
+
+class Task(TaskCreate, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class UserCreate(SQLModel):
+    username: str
+    password: str
+
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    hashed_password: str
+
+
+
+# AUTH UTILITIES
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY is not set — check your .env file")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+# APP SETUP
+
+app = FastAPI()
+
+@app.on_event("startup")
+def on_startup():
+    create_db_and_tables()
 
 @app.get("/")
 async def read_root():
-    return {"message : api is running"}   
-@app.post("/tasks",response_model=Task)
-async def create_task(task:TaskCreate,session:Session=Depends(get_session)):
+    return {"message": "api is running"}
+
+
+
+# AUTH ROUTES
+
+
+@app.post("/register")
+async def register(user: UserCreate, session: Session = Depends(get_session)):
+    existing = session.exec(select(User).where(User.username == user.username)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="username already taken")
+
+    new_user = User(username=user.username, hashed_password=hash_password(user.password))
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+    return {"message": "user created", "username": new_user.username}
+
+
+@app.post("/login")
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: Session = Depends(get_session),
+):
+    user = session.exec(select(User).where(User.username == form_data.username)).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="incorrect username or password")
+
+    token = create_access_token({"sub": user.username})
+    return {"access_token": token, "token_type": "bearer"}
+
+
+
+# TASK ROUTES (protected)
+
+
+@app.post("/tasks", response_model=Task)
+async def create_task(
+    task: TaskCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     db_task = Task.model_validate(task)
     session.add(db_task)
     session.commit()
     session.refresh(db_task)
-    return db_task 
-@app.get("/tasks",response_model=List[Task])
-async def get_tasks(session:Session=Depends(get_session)
-                    ,skip:int=0,limit:int=10,
-                    completed: Optional[bool] = None):
-    #tasks = session.exec(select(Task)).all()
-    query=select(Task)
+    return db_task
+
+
+@app.get("/tasks", response_model=List[Task])
+async def get_tasks(
+    skip: int = 0,
+    limit: int = 10,
+    completed: Optional[bool] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    query = select(Task)
     if completed is not None:
-        query=query.where(Task.completed==completed)
+        query = query.where(Task.completed == completed)
     tasks = session.exec(query.offset(skip).limit(limit)).all()
     return tasks
-@app.get("/tasks/{task_id}",response_model=Task)
-async def get_task(task_id:int,session:Session=Depends(get_session)):
+
+
+@app.get("/tasks/{task_id}", response_model=Task)
+async def get_task(
+    task_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     task = session.get(Task, task_id)
-    if not task :
-        raise HTTPException(status_code=404,detail="task pas trouve")
+    if not task:
+        raise HTTPException(status_code=404, detail="task pas trouve")
     return task
 
-@app.put("/tasks/{task_id}")
-async def update_task(task_id:int,task:TaskCreate,session:Session=Depends(get_session)):
-    old_task=session.get(Task,task_id)
+
+@app.put("/tasks/{task_id}", response_model=Task)
+async def update_task(
+    task_id: int,
+    task: TaskCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    old_task = session.get(Task, task_id)
     if not old_task:
-        raise HTTPException(status_code=404,detail="task pas trouve")
-    old_task.title=task.title
-    old_task.description=task.description
-    old_task.created_at=task.created_at
-    old_task.completed=task.completed
+        raise HTTPException(status_code=404, detail="task pas trouve")
+
+    old_task.title = task.title
+    old_task.description = task.description
+    old_task.created_at = task.created_at
+    old_task.completed = task.completed
+
     session.add(old_task)
     session.commit()
     session.refresh(old_task)
     return old_task
 
+
 @app.delete("/tasks/{task_id}")
-async def delete_task(task_id:int,session:Session=Depends(get_session)):
-    task=session.get(Task,task_id)
+async def delete_task(
+    task_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    task = session.get(Task, task_id)
     if not task:
-        raise HTTPException(status_code=404,detail="task pas trouve")
+        raise HTTPException(status_code=404, detail="task pas trouve")
+
     session.delete(task)
     session.commit()
-    return {"message":"task deleted"}
+    return {"message": "task deleted"}
