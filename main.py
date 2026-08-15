@@ -7,6 +7,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -49,6 +50,8 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
     hashed_password: str
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 
@@ -74,6 +77,14 @@ def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+def create_refresh_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -141,8 +152,28 @@ async def login(
         raise HTTPException(status_code=401, detail="incorrect username or password")
 
     token = create_access_token({"sub": user.username})
-    return {"access_token": token, "token_type": "bearer"}
+    refresh_token = create_refresh_token({"sub": user.username})
+    return {"access_token": token,"refresh_token": refresh_token, "token_type": "bearer"}
 
+@app.post("/refresh")
+async def refresh_access_token(body: RefreshRequest, session: Session = Depends(get_session)):
+    credentials_exception = HTTPException(status_code=401, detail="invalid refresh token")
+    try:
+        payload = jwt.decode(body.refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise credentials_exception
+        username = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None:
+        raise credentials_exception
+
+    new_access_token = create_access_token({"sub": user.username})
+    return {"access_token": new_access_token, "token_type": "bearer"}
 
 
 # TASK ROUTES (protected)

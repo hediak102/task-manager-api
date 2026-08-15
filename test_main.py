@@ -2,8 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, create_engine
 from sqlmodel.pool import StaticPool
-
-from main import app, get_session
+from main import app, get_session,create_refresh_token
 
 # In-memory test database — wiped every time
 engine = create_engine(
@@ -166,3 +165,60 @@ def test_user_cannot_see_other_users_tasks():
     # hedi doit toujours pouvoir y accéder normalement
     hedi_get = client.get(f"/tasks/{hedi_task_id}", headers=hedi_headers)
     assert hedi_get.status_code == 200
+# ---------------------------------------------------------
+# REFRESH TOKEN TESTS
+# ---------------------------------------------------------
+
+def register_and_login_full(username="hedi", password="hedi.2406"):
+    """Comme create_and_login_user, mais retourne les tokens bruts
+    plutôt que le header, pour pouvoir manipuler refresh_token."""
+    client.post("/register", json={"username": username, "password": password})
+    login_resp = client.post("/login", data={"username": username, "password": password})
+    return login_resp.json()
+
+
+def test_login_returns_both_tokens():
+    tokens = register_and_login_full()
+    assert "access_token" in tokens
+    assert "refresh_token" in tokens
+    assert tokens["token_type"] == "bearer"
+
+
+def test_refresh_with_valid_token_returns_new_access_token():
+    tokens = register_and_login_full()
+    response = client.post("/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+def test_new_access_token_from_refresh_works_on_protected_route():
+    tokens = register_and_login_full()
+    refresh_resp = client.post("/refresh", json={"refresh_token": tokens["refresh_token"]})
+    new_access_token = refresh_resp.json()["access_token"]
+
+    headers = {"Authorization": f"Bearer {new_access_token}"}
+    response = client.get("/tasks", headers=headers)
+    assert response.status_code == 200
+
+
+def test_refresh_with_invalid_token_fails():
+    response = client.post("/refresh", json={"refresh_token": "un_token_bidon_invalide"})
+    assert response.status_code == 401
+
+
+def test_refresh_with_access_token_instead_of_refresh_token_fails():
+    """Un access_token ne doit pas pouvoir être utilisé comme refresh_token,
+    grâce au check payload.get('type') != 'refresh'."""
+    tokens = register_and_login_full()
+    response = client.post("/refresh", json={"refresh_token": tokens["access_token"]})
+    assert response.status_code == 401
+
+
+def test_refresh_with_nonexistent_user_fails():
+    # On crée un refresh_token valide "à la main" pour un user qui n'existe pas en DB,
+    # en réutilisant les fonctions internes de main.py
+    fake_token = create_refresh_token({"sub": "utilisateur_qui_nexiste_pas"})
+    response = client.post("/refresh", json={"refresh_token": fake_token})
+    assert response.status_code == 401
