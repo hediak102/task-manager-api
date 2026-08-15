@@ -38,6 +38,7 @@ class TaskCreate(SQLModel):
 
 class Task(TaskCreate, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
 
 
 class UserCreate(SQLModel):
@@ -154,6 +155,7 @@ async def create_task(
     current_user: User = Depends(get_current_user),
 ):
     db_task = Task.model_validate(task)
+    db_task.user_id = current_user.id
     session.add(db_task)
     session.commit()
     session.refresh(db_task)
@@ -168,7 +170,7 @@ async def get_tasks(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    query = select(Task)
+    query = select(Task).where(Task.user_id == current_user.id)
     if completed is not None:
         query = query.where(Task.completed == completed)
     tasks = session.exec(query.offset(skip).limit(limit)).all()
@@ -182,7 +184,7 @@ async def get_task(
     current_user: User = Depends(get_current_user),
 ):
     task = session.get(Task, task_id)
-    if not task:
+    if not task or task.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="task pas trouve")
     return task
 
@@ -195,7 +197,7 @@ async def update_task(
     current_user: User = Depends(get_current_user),
 ):
     old_task = session.get(Task, task_id)
-    if not old_task:
+    if not old_task or old_task.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="task pas trouve")
 
     old_task.title = task.title
@@ -216,7 +218,7 @@ async def delete_task(
     current_user: User = Depends(get_current_user),
 ):
     task = session.get(Task, task_id)
-    if not task:
+    if not task or task.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="task pas trouve")
 
     session.delete(task)
