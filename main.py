@@ -14,10 +14,10 @@ load_dotenv()
 
 # DATABASE SETUP
 
-sqlite_file_name = "database.db"
-sqlite_url = f"sqlite:///{sqlite_file_name}"
-
-engine = create_engine(sqlite_url, echo=True)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+engine = create_engine(DATABASE_URL, echo=True)
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
