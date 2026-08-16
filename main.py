@@ -300,23 +300,3 @@ async def get_all_users(
 ):
     users = session.exec(select(User)).all()
     return users
-BOOTSTRAP_ADMIN_KEY = os.getenv("BOOTSTRAP_ADMIN_KEY")
-
-@app.post("/bootstrap-admin/{username}")
-async def bootstrap_admin(
-    username: str,
-    secret_key: str,
-    session: Session = Depends(get_session),
-):
-    if not BOOTSTRAP_ADMIN_KEY or secret_key != BOOTSTRAP_ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="invalid bootstrap key")
-
-    user = session.exec(select(User).where(User.username == username)).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="user not found")
-
-    user.is_admin = True
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return {"message": f"{username} is now admin"}
