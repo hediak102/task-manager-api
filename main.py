@@ -8,6 +8,8 @@ from jose import jwt, JWTError
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+
 
 load_dotenv()
 
@@ -123,6 +125,20 @@ def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
 # APP SETUP
 
 app = FastAPI()
+
+origins = [
+    "http://localhost:5173",   #React en dev
+    "https://task-manager-frontend-0zrd.onrender.com",
+    "http://localhost:4173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 #@app.on_event("startup")
 #def on_startup():
@@ -265,6 +281,9 @@ async def delete_task(
     return {"message": "task deleted"}
 
 #admin routes
+@app.get("/me", response_model=UserRead)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
 
 @app.get("/admin/tasks", response_model=List[Task])
 async def get_all_tasks(
