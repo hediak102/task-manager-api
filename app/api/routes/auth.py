@@ -15,14 +15,23 @@ class RefreshRequest(BaseModel):
 
 @router.post("/register")
 async def register(user: UserCreate, session: Session = Depends(get_session)):
-    existing = session.exec(select(User).where(User.username == user.username)).first()
+    existing = session.exec(
+        select(User).where(
+            (User.username == user.username) | (User.email == user.email)
+        )
+    ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="username already taken")
-    new_user = User(username=user.username, hashed_password=hash_password(user.password))
+        raise HTTPException(status_code=400, detail="username or email already taken")
+
+    new_user = User(
+        username=user.username,
+        email=user.email,
+        hashed_password=hash_password(user.password),
+    )
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
-    return {"message": "user created", "username": new_user.username}
+    return {"message": "user created", "username": new_user.username, "email": new_user.email}
 
 @router.post("/login")
 async def login(

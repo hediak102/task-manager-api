@@ -4,7 +4,8 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
-from main import Task, User
+from app.models.task import Task
+from app.models.user import User
 import os
 import sys
 from dotenv import load_dotenv
