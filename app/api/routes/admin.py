@@ -7,8 +7,9 @@ from app.api.deps import get_current_user
 from app.models.task import Task
 from app.models.user import User,UserRead
 from app.api.deps import get_current_admin
-
+from pydantic import BaseModel
 router=APIRouter(tags=["admin"])
+
 
 @router.get("/me", response_model=UserRead)
 async def get_me(current_user: User = Depends(get_current_user)):

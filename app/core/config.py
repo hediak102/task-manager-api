@@ -10,7 +10,7 @@ if DATABASE_URL.startswith("postgres://"):
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("SECRET_KEY is not set — check your .env file")
-
+ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7

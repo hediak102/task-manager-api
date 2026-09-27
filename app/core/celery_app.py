@@ -18,6 +18,6 @@ celery_app.conf.beat_schedule = {
     },
     "check-overdue-tasks-daily": {
         "task": "app.tasks.reminders.check_overdue_tasks",
-        "schedule": crontab(hour=8, minute=0),  # tous les jours à 8h
+        "schedule": crontab(minute='*/5'),  # tous les jours à 8h
     },
 }
