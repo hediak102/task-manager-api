@@ -10,8 +10,9 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
     email: str = Field(unique=True, index=True)
-    hashed_password: str
+    hashed_password:Optional[str] = None
     is_admin: bool = Field(default=False)
+    oauth_provider: Optional[str] = None  # "google" ou None si compte classique
 
 class UserRead(SQLModel):
     id: int
